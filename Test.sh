@@ -12,8 +12,8 @@ MAX_RETRIES=${MAX_RETRIES:-99}
 read -p "请输入重试写入间隔 (秒) (默认: 5): " RETRY_DELAY
 RETRY_DELAY=${RETRY_DELAY:-5}
 
-read -p "请输入重复执行次数 (默认: 10000): " LOOP_COUNT
-LOOP_COUNT=${LOOP_COUNT:-10000}
+read -p "请输入脚本重复执行次数 (默认: 100): " LOOP_COUNT
+LOOP_COUNT=${LOOP_COUNT:-100}
 
 generate_token() {
   tr -dc 'a-z0-9' < /dev/urandom | head -c 31
