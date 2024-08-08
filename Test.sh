@@ -1,27 +1,18 @@
 #!/bin/bash
 
-BASE_DIR="/home/sub"
-if [ ! -d "$BASE_DIR" ]; then
-  mkdir -p "$BASE_DIR"
-  if [ $? -ne 0 ]; then
-    echo "无法创建目录 $BASE_DIR，请检查权限。"
-    exit 1
-  fi
-fi
-
 read -p "请输入 TELEGRAM_BOT_TOKEN: " TELEGRAM_BOT_TOKEN
 read -p "请输入 CHAT_ID: " CHAT_ID
 
-read -p "请输入生成的tocken数量 (默认: 5000): " TOKEN_COUNT
+read -p "请输入生成token的数量 (默认: 5000): " TOKEN_COUNT
 TOKEN_COUNT=${TOKEN_COUNT:-5000}
 
-read -p "请输入尝试写入文件上限 (默认: 99): " MAX_RETRIES
+read -p "请输入重试写入上限 (默认: 99): " MAX_RETRIES
 MAX_RETRIES=${MAX_RETRIES:-99}
 
-read -p "请输入尝试写入文件间隔 (秒) (默认: 5): " RETRY_DELAY
+read -p "请输入重试写入间隔 (秒) (默认: 5): " RETRY_DELAY
 RETRY_DELAY=${RETRY_DELAY:-5}
 
-read -p "请输入脚本执行次数 (默认: 10000): " LOOP_COUNT
+read -p "请输入重复执行次数 (默认: 10000): " LOOP_COUNT
 LOOP_COUNT=${LOOP_COUNT:-10000}
 
 generate_token() {
@@ -48,6 +39,7 @@ write_with_retry() {
   return 0
 }
 
+BASE_DIR="/home/sub"
 TOKEN_FILE="$BASE_DIR/tokens.txt"
 SUCCESS_FILE="$BASE_DIR/success.txt"
 FAIL_FILE="$BASE_DIR/fail.txt"
@@ -88,6 +80,7 @@ run_script() {
     done < "$FAIL_FILE"
   fi
 
+  echo "生成并保存新的tokens"
   new_tokens=()
   for ((i=0; i<TOKEN_COUNT; i++)); do
     while : ; do
@@ -96,6 +89,7 @@ run_script() {
         token_map["$token"]=1
         if write_with_retry "$TOKEN_FILE" "$token"; then
           new_tokens+=("$token")
+          echo "生成token: $token"
         else
           echo "写入token $token 失败" | tee -a "$LOG_FILE"
         fi
@@ -104,6 +98,7 @@ run_script() {
     done
   done
 
+  echo "处理新生成的tokens"
   process_token() {
     token=$1
     success_map=$2
@@ -111,19 +106,23 @@ run_script() {
     LOG_FILE=$4
 
     if [[ -n "${success_map[$token]}" ]] || [[ -n "${fail_map[$token]}" ]]; then
+      echo "Token $token 已处理过，跳过..."
       return
     fi
 
     url="https://dy.tagsub.net/api/v1/client/subscribe?token=$token"
+    echo "请求URL: $url"
     response=$(curl -s -o /dev/null -w "%{http_code}" -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36" "$url" --retry 5 --retry-delay 2)
     if [ "$response" -eq 200 ]; then
       if write_with_retry "$SUCCESS_FILE" "$token"; then
+        echo "Token $token 成功"
         success_map["$token"]=1
       else
         echo "写入成功文件失败" | tee -a "$LOG_FILE"
       fi
     else
       if write_with_retry "$FAIL_FILE" "$token"; then
+        echo "Token $token 失败，响应代码: $response"
         fail_map["$token"]=1
       else
         echo "写入失败文件失败" | tee -a "$LOG_FILE"
@@ -140,10 +139,12 @@ run_script() {
     process_token "$token" success_map fail_map "$LOG_FILE"
   done
 
+  echo "拉取成功的token完整链接："
   successful_tokens=$(cat "$SUCCESS_FILE")
   message="拉取成功的token完整链接：\n"
   for token in $successful_tokens; do
     link="https://dy.tagsub.net/api/v1/client/subscribe?token=$token"
+    echo "$link"
     message+="$link\n"
   done
 
@@ -155,8 +156,12 @@ run_script() {
   }
 
   send_telegram_message "$message"
+
+  echo "所有tokens处理完毕"
 }
 
 for ((i=1; i<=LOOP_COUNT; i++)); do
+  echo "执行第 $i 次"
   run_script
+  echo "第 $i 次执行完成"
 done
