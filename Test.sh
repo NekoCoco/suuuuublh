@@ -19,6 +19,12 @@ generate_token() {
   tr -dc 'a-z0-9' < /dev/urandom | head -c 31
 }
 
+BASE_DIR="/home/sub"
+TOKEN_FILE="$BASE_DIR/tokens.txt"
+SUCCESS_FILE="$BASE_DIR/success.txt"
+FAIL_FILE="$BASE_DIR/fail.txt"
+LOG_FILE="$BASE_DIR/error.log"
+
 write_with_retry() {
   local file=$1
   local content=$2
@@ -39,12 +45,6 @@ write_with_retry() {
   return 0
 }
 
-BASE_DIR="/home/sub"
-TOKEN_FILE="$BASE_DIR/tokens.txt"
-SUCCESS_FILE="$BASE_DIR/success.txt"
-FAIL_FILE="$BASE_DIR/fail.txt"
-LOG_FILE="$BASE_DIR/error.log"
-
 run_script() {
   mkdir -p "$BASE_DIR" 2>> "$LOG_FILE"
   if [ $? -ne 0 ]; then
@@ -63,21 +63,6 @@ run_script() {
     while read -r token; do
       token_map["$token"]=1
     done < "$TOKEN_FILE"
-  fi
-
-  declare -A success_map
-  declare -A fail_map
-
-  if [ -f "$SUCCESS_FILE" ]; then
-    while read -r token; do
-      success_map["$token"]=1
-    done < "$SUCCESS_FILE"
-  fi
-
-  if [ -f "$FAIL_FILE" ]; then
-    while read -r token; do
-      fail_map["$token"]=1
-    done < "$FAIL_FILE"
   fi
 
   echo "生成并保存新的tokens"
@@ -101,17 +86,43 @@ run_script() {
   echo "处理新生成的tokens"
 
   # 将处理函数逻辑嵌入 xargs 命令
+  export MAX_RETRIES RETRY_DELAY SUCCESS_FILE FAIL_FILE LOG_FILE
   printf "%s\n" "${new_tokens[@]}" | xargs -P 10 -I {} bash -c '
     token={}
+    write_with_retry() {
+      local file=$1
+      local content=$2
+      local retries=0
+      while true; do
+        echo "$content" >> "$file"
+        if [ $? -eq 0 ]; then
+          break
+        else
+          retries=$((retries + 1))
+          if [ $retries -ge $MAX_RETRIES ]; then
+            echo "无法写入到 $file, 达到最大重试次数" >> "$LOG_FILE"
+            return 1
+          fi
+          sleep $RETRY_DELAY
+        fi
+      done
+      return 0
+    }
     url="https://dy.tagsub.net/api/v1/client/subscribe?token=$token"
     echo "请求URL: $url"
     response=$(curl -s -o /dev/null -w "%{http_code}" -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36" "$url" --retry 5 --retry-delay 2)
     if [ "$response" -eq 200 ]; then
-      echo "$token" >> "$SUCCESS_FILE"
-      echo "Token $token 成功"
+      if write_with_retry "$SUCCESS_FILE" "$token"; then
+        echo "Token $token 成功"
+      else
+        echo "写入成功文件失败" | tee -a "$LOG_FILE"
+      fi
     else
-      echo "$token" >> "$FAIL_FILE"
-      echo "Token $token 失败，响应代码: $response"
+      if write_with_retry "$FAIL_FILE" "$token"; then
+        echo "Token $token 失败，响应代码: $response"
+      else
+        echo "写入失败文件失败" | tee -a "$LOG_FILE"
+      fi
     fi
   '
 
