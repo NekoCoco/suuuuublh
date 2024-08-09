@@ -18,10 +18,12 @@ LOOP_COUNT=${LOOP_COUNT:-100}
 read -p "请输入并发处理的数量 (默认: 20): " CONCURRENCY
 CONCURRENCY=${CONCURRENCY:-20}
 
+# 定义生成token的函数
 generate_token() {
   tr -dc 'a-z0-9' < /dev/urandom | head -c 31
 }
 
+# 定义带重试功能的写入函数
 write_with_retry() {
   local file=$1
   local content=$2
@@ -42,12 +44,56 @@ write_with_retry() {
   return 0
 }
 
+# 定义处理token的函数
+process_token() {
+  local token=$1
+  local success_map=$2
+  local fail_map=$3
+  local LOG_FILE=$4
+
+  if [[ -n "${success_map[$token]}" ]] || [[ -n "${fail_map[$token]}" ]]; then
+    echo "Token $token 已处理过，跳过..."
+    return
+  fi
+
+  url="https://dy.tagsub.net/api/v1/client/subscribe?token=$token"
+  echo "请求URL: $url"
+
+  response=$(curl -s -w "%{http_code}" -H "User-Agent: Mozilla/5.0" -o /tmp/response_body "$url" --retry 5 --retry-delay 2)
+  http_code="${response: -3}"
+  response_body=$(cat /tmp/response_body)
+
+  if [ "$http_code" -eq 200 ] && [[ "$response_body" == *"success"* ]]; then  # 假设成功的响应内容包含 "success"
+    if write_with_retry "$SUCCESS_FILE" "$token"; then
+      echo "Token $token 成功"
+      success_map["$token"]=1
+    else
+      echo "写入成功文件失败" | tee -a "$LOG_FILE"
+    fi
+  else
+    if write_with_retry "$FAIL_FILE" "$token"; then
+      echo "Token $token 失败，响应代码: $http_code，响应内容: $response_body" | tee -a "$LOG_FILE"
+      fail_map["$token"]=1
+    else
+      echo "写入失败文件失败" | tee -a "$LOG_FILE"
+    fi
+  fi
+
+  rm -f /tmp/response_body
+}
+
+# 导出需要在子进程中使用的函数
+export -f process_token
+export -f write_with_retry
+
+# 设置路径
 BASE_DIR="/home/sub"
 TOKEN_FILE="$BASE_DIR/tokens.txt"
 SUCCESS_FILE="$BASE_DIR/success.txt"
 FAIL_FILE="$BASE_DIR/fail.txt"
 LOG_FILE="$BASE_DIR/error.log"
 
+# 主脚本逻辑
 run_script() {
   mkdir -p "$BASE_DIR" 2>> "$LOG_FILE"
   if [ $? -ne 0 ]; then
@@ -130,6 +176,7 @@ run_script() {
   echo "所有tokens处理完毕"
 }
 
+# 循环执行
 for ((i=1; i<=LOOP_COUNT; i++)); do
   echo "执行第 $i 次"
   run_script
