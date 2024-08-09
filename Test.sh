@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# 禁用基数转换以避免“value too great for base”错误
+export LC_ALL=C
+
 read -p "请输入 TELEGRAM_BOT_TOKEN: " TELEGRAM_BOT_TOKEN
 read -p "请输入 CHAT_ID: " CHAT_ID
 
@@ -23,8 +26,8 @@ generate_token() {
 }
 
 write_with_retry() {
-  local file=$1
-  local content=$2
+  local file="$1"
+  local content="$2"
   local retries=0
   while true; do
     echo "$content" >> "$file"
@@ -32,11 +35,11 @@ write_with_retry() {
       break
     else
       retries=$((retries + 1))
-      if [ $retries -ge $MAX_RETRIES ]; then
+      if [ "$retries" -ge "$MAX_RETRIES" ]; then
         echo "无法写入到 $file, 达到最大重试次数" >> "$LOG_FILE"
         return 1
       fi
-      sleep $RETRY_DELAY
+      sleep "$RETRY_DELAY"
     fi
   done
   return 0
@@ -63,7 +66,7 @@ run_script() {
 
   declare -A token_map
   if [ -f "$TOKEN_FILE" ]; then
-    while read -r token; do
+    while IFS= read -r token; do
       token_map["$token"]=1
     done < "$TOKEN_FILE"
   fi
@@ -72,13 +75,13 @@ run_script() {
   declare -A fail_map
 
   if [ -f "$SUCCESS_FILE" ]; then
-    while read -r token; do
+    while IFS= read -r token; do
       success_map["$token"]=1
     done < "$SUCCESS_FILE"
   fi
 
   if [ -f "$FAIL_FILE" ]; then
-    while read -r token; do
+    while IFS= read -r token; do
       fail_map["$token"]=1
     done < "$FAIL_FILE"
   fi
@@ -103,15 +106,16 @@ run_script() {
 
   echo "处理新生成的tokens"
   process_token() {
-    token=$1
+    local token="$1"
 
     if [[ -n "${success_map[$token]}" ]] || [[ -n "${fail_map[$token]}" ]]; then
       echo "Token $token 已处理过，跳过..."
       return
     fi
 
-    url="https://dy.tagsub.net/api/v1/client/subscribe?token=$token"
+    local url="https://dy.tagsub.net/api/v1/client/subscribe?token=$token"
     echo "请求URL: $url"
+    local response
     response=$(curl -s -o /dev/null -w "%{http_code}" -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36" "$url" --retry 5 --retry-delay 2)
     if [ "$response" -eq 200 ]; then
       if write_with_retry "$SUCCESS_FILE" "$token"; then
@@ -140,7 +144,7 @@ run_script() {
   successful_tokens=$(cat "$SUCCESS_FILE")
   message="拉取成功的token完整链接：\n"
   for token in $successful_tokens; do
-    link="https://dy.tagsub.net/api/v1/client/subscribe?token=$token"
+    local link="https://dy.tagsub.net/api/v1/client/subscribe?token=$token"
     echo "$link"
     message+="$link\n"
   done
@@ -148,7 +152,7 @@ run_script() {
   TELEGRAM_API_URL="https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage"
 
   send_telegram_message() {
-    local message=$1
+    local message="$1"
     curl -s -X POST "$TELEGRAM_API_URL" -d chat_id="$CHAT_ID" -d text="$message"
   }
 
