@@ -135,8 +135,13 @@ run_script() {
   export BASE_DIR TOKEN_FILE SUCCESS_FILE FAIL_FILE LOG_FILE
   export MAX_RETRIES RETRY_DELAY
 
-  for token in "${new_tokens[@]}"; do
-    process_token "$token" success_map fail_map "$LOG_FILE"
+  echo "并发处理"
+  batch_size=20
+  for (( i=0; i<${#new_tokens[@]}; i+=batch_size )); do
+    for (( j=i; j<i+batch_size && j<${#new_tokens[@]}; j++ )); do
+      process_token "${new_tokens[j]}" success_map fail_map "$LOG_FILE" &
+    done
+    wait
   done
 
   echo "拉取成功的token完整链接："
